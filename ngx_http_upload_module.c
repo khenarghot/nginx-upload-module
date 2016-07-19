@@ -273,7 +273,7 @@ static ngx_int_t ngx_http_upload_parse_range(ngx_str_t *range, ngx_http_upload_r
 
 static void ngx_http_read_upload_client_request_body_handler(ngx_http_request_t *r);
 static ngx_int_t ngx_http_do_read_upload_client_request_body(ngx_http_request_t *r);
-static ngx_int_t ngx_http_process_request_body(ngx_http_request_t *r, ngx_chain_t *body);
+static ngx_int_t ngx_http_process_request_body(ngx_http_request_t *r);
 
 static ngx_int_t ngx_http_read_upload_client_request_body(ngx_http_request_t *r);
 
@@ -1678,7 +1678,6 @@ ngx_http_upload_merge_ranges(ngx_http_upload_ctx_t *u, ngx_http_upload_range_t *
     ngx_http_upload_merger_state_t ms;
     off_t        remaining;
     ssize_t      rc;
-    int          result;
     ngx_buf_t    in_buf;
     ngx_buf_t    out_buf;
     ngx_http_upload_loc_conf_t  *ulcf = ngx_http_get_module_loc_conf(u->request, ngx_http_upload_module);
@@ -1772,7 +1771,10 @@ ngx_http_upload_merge_ranges(ngx_http_upload_ctx_t *u, ngx_http_upload_range_t *
     }
 
     if(out_buf.file_pos < state_file->info.st_size) {
-        result = ftruncate(state_file->fd, out_buf.file_pos);
+        if (ftruncate(state_file->fd, out_buf.file_pos))
+        {
+            /* TODO:  Хорошо-бы что то сделать, только я не знаю что… */
+        }
     }
 
     rc = ms.complete_ranges ? NGX_OK : NGX_AGAIN;
@@ -2601,7 +2603,7 @@ ngx_http_read_upload_client_request_body(ngx_http_request_t *r) {
             r->header_in->pos += r->headers_in.content_length_n;
             r->request_length += r->headers_in.content_length_n;
 
-            if (ngx_http_process_request_body(r, rb->bufs) != NGX_OK) {
+            if (ngx_http_process_request_body(r) != NGX_OK) {
                 upload_shutdown_ctx(u);
                 return NGX_HTTP_INTERNAL_SERVER_ERROR;
             }
@@ -2625,7 +2627,6 @@ ngx_http_read_upload_client_request_body(ngx_http_request_t *r) {
 
             /* the whole request body may be placed in r->header_in */
 
-            rb->to_write = rb->bufs;
 
             r->read_event_handler = ngx_http_read_upload_client_request_body_handler;
 
@@ -2684,7 +2685,6 @@ ngx_http_read_upload_client_request_body(ngx_http_request_t *r) {
 
     *next = cl;
 
-    rb->to_write = rb->bufs;
 
     r->read_event_handler = ngx_http_read_upload_client_request_body_handler;
 
@@ -2766,7 +2766,7 @@ ngx_http_do_read_upload_client_request_body(ngx_http_request_t *r)
         for ( ;; ) {
             if (rb->buf->last == rb->buf->end) {
 
-                rc = ngx_http_process_request_body(r, rb->to_write);
+                rc = ngx_http_process_request_body(r);
 
                 switch(rc) {
                     case NGX_OK:
@@ -2782,7 +2782,6 @@ ngx_http_do_read_upload_client_request_body(ngx_http_request_t *r)
                         return NGX_HTTP_INTERNAL_SERVER_ERROR;
                 }
 
-                rb->to_write = rb->bufs->next ? rb->bufs->next : rb->bufs;
                 rb->buf->last = rb->buf->start;
             }
 
@@ -2874,7 +2873,7 @@ ngx_http_do_read_upload_client_request_body(ngx_http_request_t *r)
         ngx_del_timer(c->read);
     }
 
-    rc = ngx_http_process_request_body(r, rb->to_write);
+    rc = ngx_http_process_request_body(r);
 
     switch(rc) {
         case NGX_OK:
@@ -2896,10 +2895,11 @@ ngx_http_do_read_upload_client_request_body(ngx_http_request_t *r)
 } /* }}} */
 
 static ngx_int_t /* {{{ ngx_http_process_request_body */
-ngx_http_process_request_body(ngx_http_request_t *r, ngx_chain_t *body)
+ngx_http_process_request_body(ngx_http_request_t *r)
 {
     ngx_int_t rc;
     ngx_http_upload_ctx_t     *u = ngx_http_get_module_ctx(r, ngx_http_upload_module);
+    ngx_chain_t *body = r->request_body->bufs;
 
     // Feed all the buffers into data handler
     while(body) {
