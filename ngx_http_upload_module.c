@@ -8,22 +8,58 @@
 #include <ngx_http.h>
 #include <nginx.h>
 
-#if (NGX_HAVE_OPENSSL_MD5_H)
+
+#if (NGX_OPENSSL)
+// MD5 support
 #include <openssl/md5.h>
-#else
-#include <md5.h>
-#endif
+# define _md5_init(ctx) \
+    MD5_Init(&(ctx)->md5)
+# define _md5_update(ctx, data, size) \
+    MD5_Update(&(ctx)->md5, data, size)
+# define _md5_final(ctx) \
+    MD5_Final((ctx)->md5_digest, &(ctx)->md5)
+typedef MD5_CTX _md5_ctx_t;
 
-#if (NGX_OPENSSL_MD5)
-#define  MD5Init    MD5_Init
-#define  MD5Update  MD5_Update
-#define  MD5Final   MD5_Final
-#endif
-
-#if (NGX_HAVE_OPENSSL_SHA1_H)
+// SHA1 support
 #include <openssl/sha.h>
+# define _sha1_init(ctx) \
+    SHA1_Init(&(ctx)->sha1)
+# define _sha1_update(ctx, data, len) \
+    SHA1_Update(&(ctx)->sha1, data, len)
+# define _sha1_final(ctx) \
+    SHA1_Final((ctx)->sha1_digest, &(ctx)->sha1)
+typedef SHA_CTX  _sha1_ctx_t;
+
 #else
-#include <sha.h>
+
+// MD5 support
+#include <ngx_md5.h>
+# define _md5_init(ctx) \
+    ngx_md5_init(&(ctx)->md5)
+# define _md5_update(ctx, data, size) \
+    ngx_md5_update(&(ctx)->md5, data, size)
+# define _md5_final(ctx) \
+    ngx_md5_final((ctx)->md5_digest, &(ctx)->md5)
+typedef ngx_md5_t _md5_ctx_t;
+
+# ifndef MD5_DIGEST_LENGTH
+#  define MD5_DIGEST_LENGTH 16
+# endif
+
+// SHA1 support
+#include <ngx_sha1.h>
+# define _sha1_init(ctx) \
+    ngx_sha1_init(&(ctx)->sha1)
+# define _sha1_update(ctx, data, len) \
+    ngx_sha1_update(&(ctx)->sha1, data, len)
+# define _sha1_final(ctx) \
+    ngx_sha1_final((ctx)->sha1_digest, &(ctx)->sha1)
+typedef ngx_sha1_t  _sha1_ctx_t;
+
+# ifndef SHA_DIGEST_LENGTH
+#  define SHA_DIGEST_LENGTH 20
+# endif
+
 #endif
 
 #define MULTIPART_FORM_DATA_STRING              "multipart/form-data"
@@ -148,12 +184,12 @@ typedef struct {
 } ngx_http_upload_loc_conf_t;
 
 typedef struct ngx_http_upload_md5_ctx_s {
-    MD5_CTX     md5;
+    _md5_ctx_t     md5;
     u_char      md5_digest[MD5_DIGEST_LENGTH * 2];
 } ngx_http_upload_md5_ctx_t;
 
 typedef struct ngx_http_upload_sha1_ctx_s {
-    SHA_CTX     sha1;
+    _sha1_ctx_t     sha1;
     u_char      sha1_digest[SHA_DIGEST_LENGTH * 2];
 } ngx_http_upload_sha1_ctx_t;
 
@@ -1112,10 +1148,10 @@ static ngx_int_t ngx_http_upload_start_handler(ngx_http_upload_ctx_t *u) { /* {{
         }
 
         if(u->md5_ctx != NULL)
-            MD5Init(&u->md5_ctx->md5);
+            _md5_init(u->md5_ctx);
 
         if(u->sha1_ctx != NULL)
-            SHA1_Init(&u->sha1_ctx->sha1);
+            _sha1_init(u->sha1_ctx);
 
         if(u->calculate_crc32)
             ngx_crc32_init(u->crc32);
@@ -1202,10 +1238,10 @@ static void ngx_http_upload_finish_handler(ngx_http_upload_ctx_t *u) { /* {{{ */
         ngx_close_file(u->output_file.fd);
 
         if(u->md5_ctx)
-            MD5Final(u->md5_ctx->md5_digest, &u->md5_ctx->md5);
+            _md5_final(u->md5_ctx);
 
         if(u->sha1_ctx)
-            SHA1_Final(u->sha1_ctx->sha1_digest, &u->sha1_ctx->sha1);
+            _sha1_final(u->sha1_ctx);
 
         if(u->calculate_crc32)
             ngx_crc32_final(u->crc32);
@@ -1364,10 +1400,10 @@ static ngx_int_t ngx_http_upload_flush_output_buffer(ngx_http_upload_ctx_t *u, u
         }
 
         if(u->md5_ctx)
-            MD5Update(&u->md5_ctx->md5, buf, len);
+            _md5_update(u->md5_ctx, buf, len);
 
         if(u->sha1_ctx)
-            SHA1_Update(&u->sha1_ctx->sha1, buf, len);
+            _sha1_update(u->sha1_ctx, buf, len);
 
         if(u->calculate_crc32)
             ngx_crc32_update(&u->crc32, buf, len);
